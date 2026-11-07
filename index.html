@@ -495,8 +495,8 @@ function closeNet() {
 // Works with both a native RTCDataChannel (manual pairing) and a PeerJS DataConnection (room password).
 function wire(ch) {
   const pj = !!ch.peer, lab = ch.label, gen = netGen;
-  if (lab === 'r') chR = ch; else chU = ch;
-  const open = () => { if (gen !== netGen) return; opened[lab] = true; if (opened.r && opened.u) onConnected(); };
+  if (!pj) { if (lab === 'r') chR = ch; else chU = ch; }
+  const open = () => { if (gen !== netGen) return; if (lab === 'r') chR = ch; else chU = ch; opened[lab] = true; if (opened.r && opened.u) onConnected(); };
   const msg = d => { if (gen !== netGen) return; try { onMsg(pj ? d : JSON.parse(d)); } catch (err) {} };
   if (pj) {
     ch.on('open', open); ch.on('data', msg); ch.on('error', () => {});
@@ -537,6 +537,7 @@ function startRoomHost(auto) {
     if (gen !== netGen) return;
     if (guest && guest !== c.peer) { c.on('open', () => c.close()); return; } // room is full
     guest = c.peer; setText('roomStatus', 'Friend found — connecting…'); wire(c);
+    c.on('iceStateChanged', st => { if (!G && gen === netGen) setText('roomStatus', 'Friend found — linking phones (' + st + ')…'); });
   });
   p.on('disconnected', () => { if (gen === netGen && !G) { try { p.reconnect(); } catch (e) {} } });
   p.on('error', e => {
@@ -565,32 +566,33 @@ function startRoomJoin(pass) {
   if (name.length < 3) { setText('rjStatus', 'Enter the host’s password.'); return; }
   if (typeof Peer === 'undefined') { setText('rjStatus', 'Could not load the connection library — check your internet.'); return; }
   closeNet(); role = 'guest'; const gen = netGen; setText('rjStatus', 'Connecting…');
-  let tries = 0, conn = null, retryT = 0, notFound = false;
+  let tries = 0, conns = [], retryT = 0, notFound = false, hist = [];
   const t0 = Date.now(), p = peer = mkPeer(undefined);
   const live = () => gen === netGen && !(opened.r && opened.u);
-  const ice = () => (conn && conn.peerConnection && conn.peerConnection.iceConnectionState) || 'waiting';
   const fail = t => { if (live()) { setText('rjStatus', t); closeNet(); } };
   const attempt = () => {
     if (!live()) return; tries++; notFound = false;
+    for (const c of conns) { try { c.close(); } catch (e) {} }
     const id = 'neonpong-' + name;
     const r = p.connect(id, { label: 'r', reliable: true, serialization: 'json' });
     const u = p.connect(id, { label: 'u', reliable: false, serialization: 'json' });
-    wire(r); wire(u); conn = r;
+    r.on('iceStateChanged', st => hist.push(st));
+    wire(r); wire(u); conns = [r, u];
   };
   p.on('open', () => {
     if (gen !== netGen) return;
     attempt();
     const iv = setInterval(() => {
       if (!live()) { clearInterval(iv); return; }
-      const s = Math.round((Date.now() - t0) / 1000);
-      if (s >= 35) {
+      const s = Math.round((Date.now() - t0) / 1000), st = hist.length ? hist[hist.length - 1] : 'no reply from host';
+      if (s >= 40) {
         clearInterval(iv);
-        const st = ice();
         fail(notFound ? 'Room not found. Check the password, and make sure the host has created the room and kept the game open.'
-          : 'Found the host but could not link the phones (network: ' + st + '). Try both phones on the same Wi-Fi, or turn off VPN / Low Data Mode.');
+          : 'Could not link the phones. Last status: ' + (hist.join(' → ') || 'no reply from host') + '. Make sure the host kept the game open, or try another network (Wi-Fi vs mobile data).');
         return;
       }
-      setText('rjStatus', notFound ? 'Waiting for the host’s room… (' + s + 's)' : 'Connecting to host… (' + s + 's, network: ' + ice() + ')');
+      if (s > 0 && s % 9 === 0 && !(opened.r || opened.u)) attempt(); // host may have been asleep: send a fresh request
+      setText('rjStatus', notFound ? 'Waiting for the host’s room… (' + s + 's)' : 'Connecting to host… (' + s + 's, ' + st + ')');
     }, 1000);
   });
   p.on('error', e => {
@@ -616,7 +618,7 @@ const sendR = o => tx(chR, o);
 const sendU = o => tx(chU, o);
 
 function onConnected() {
-  if (role === 'host') startMatch('host');
+  if (role === 'host') { if (!G) startMatch('host'); }
   else { setText('joinStatus', 'Connected! Waiting for host to start…'); setText('rjStatus', 'Connected! Waiting for host to start…'); }
 }
 function onDisc() {
