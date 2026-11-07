@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#05060f">
+<title>Neon Pong</title>
+<style>
+:root{--h:180;--bg:#05060f;--fg:#e8f4ff}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+html,body{margin:0;width:100%;height:100%;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Rounded",system-ui,sans-serif;overflow:hidden;overscroll-behavior:none;position:fixed}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+#hud{position:fixed;left:0;right:0;top:0;display:none;justify-content:space-between;padding:calc(env(safe-area-inset-top) + 6px) 12px 0;pointer-events:none;z-index:5}
+#hud button{pointer-events:auto;width:40px;height:40px;border-radius:50%;border:1px solid hsl(var(--h) 100% 60% / .6);background:rgba(5,6,15,.6);color:var(--fg);font-size:17px}
+#ui{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;padding:calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 16px);pointer-events:none}
+.screen{display:none;width:100%;max-width:420px;max-height:100%;overflow:auto;padding:22px 18px;border-radius:24px;background:rgba(6,9,24,.72);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid hsl(var(--h) 100% 60% / .35);box-shadow:0 0 40px hsl(var(--h) 100% 55% / .25);pointer-events:auto;text-align:center}
+.screen.on{display:block}
+h1{margin:0 0 4px;font-size:44px;letter-spacing:.12em;font-weight:900;color:hsl(var(--h) 100% 65%);text-shadow:0 0 18px hsl(var(--h) 100% 60% / .9),0 0 50px hsl(calc(var(--h) + 120) 100% 60% / .6)}
+h2{margin:0 0 6px;font-size:24px;letter-spacing:.08em;color:hsl(var(--h) 100% 70%);text-shadow:0 0 14px hsl(var(--h) 100% 60% / .7)}
+p{margin:6px 0 12px;font-size:14px;line-height:1.4;opacity:.8}
+.btn{display:block;width:100%;margin:10px 0;padding:15px 12px;font-size:17px;font-weight:700;letter-spacing:.06em;color:var(--fg);background:linear-gradient(135deg,hsl(var(--h) 100% 50% / .25),hsl(calc(var(--h) + 120) 100% 50% / .25));border:1px solid hsl(var(--h) 100% 60%);border-radius:14px;box-shadow:0 0 18px hsl(var(--h) 100% 55% / .35);text-transform:uppercase}
+.btn:active{transform:scale(.97);filter:brightness(1.4)}
+.btn.small{display:inline-block;width:auto;margin:4px;padding:10px 14px;font-size:14px}
+.btn.ghost{background:transparent;border-color:rgba(255,255,255,.25);box-shadow:none}
+.row{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.step{margin-top:14px;text-align:left;font-size:13px;letter-spacing:.05em;text-transform:uppercase;color:hsl(var(--h) 100% 75%)}
+textarea{-webkit-user-select:text;user-select:text;width:100%;height:76px;margin-top:6px;padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.45);color:#cfe;font:12px/1.3 ui-monospace,Menlo,monospace;resize:none}
+.status{margin-top:10px;font-size:14px;min-height:20px;color:hsl(var(--h) 100% 75%)}
+#toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 28px);transform:translateX(-50%);padding:10px 16px;border-radius:20px;background:rgba(0,0,0,.8);border:1px solid hsl(var(--h) 100% 60%);font-size:14px;opacity:0;transition:opacity .25s;z-index:30;pointer-events:none;max-width:90%}
+#toast.on{opacity:1}
+#hxwrap{position:fixed;left:-100px;top:-100px;opacity:0;pointer-events:none}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"><button id="btnQuit" aria-label="Quit">✕</button><button id="btnMute" aria-label="Sound">🔊</button></div>
+
+<div id="ui">
+  <section class="screen on" id="s-menu">
+    <h1>NEON<br>PONG</h1>
+    <p>Two phones. One arena. Power-ups, multi-ball and a court that never sits still.</p>
+    <button class="btn" id="m-solo">Solo vs AI</button>
+    <button class="btn" id="m-host">Host a match</button>
+    <button class="btn" id="m-join">Join a match</button>
+    <p style="font-size:12px;opacity:.55">Drag your finger left / right to move your paddle. First to 7 wins.</p>
+  </section>
+
+  <section class="screen" id="s-ai">
+    <h2>Difficulty</h2>
+    <button class="btn" data-diff="easy">Chill</button>
+    <button class="btn" data-diff="normal">Normal</button>
+    <button class="btn" data-diff="hard">Cyborg</button>
+    <button class="btn ghost back">Back</button>
+  </section>
+
+  <section class="screen" id="s-host">
+    <h2>Host a match</h2>
+    <p>Both phones need this page open. Same Wi-Fi or any internet connection works — no server needed.</p>
+    <div class="step">1 · Send your friend this invite</div>
+    <textarea id="hostCode" readonly placeholder="Creating invite…"></textarea>
+    <div class="row">
+      <button class="btn small" id="h-share">Share</button>
+      <button class="btn small" id="h-copy">Copy</button>
+    </div>
+    <div class="step">2 · Paste their reply code</div>
+    <textarea id="hostReply" placeholder="Paste the reply here"></textarea>
+    <div class="row">
+      <button class="btn small" id="h-paste">Paste</button>
+      <button class="btn small" id="h-connect">Connect</button>
+    </div>
+    <div class="status" id="hostStatus"></div>
+    <button class="btn ghost back">Cancel</button>
+  </section>
+
+  <section class="screen" id="s-join">
+    <h2>Join a match</h2>
+    <div class="step">1 · Paste the invite you received</div>
+    <textarea id="joinCode" placeholder="Paste invite link or code"></textarea>
+    <div class="row">
+      <button class="btn small" id="j-paste">Paste</button>
+      <button class="btn small" id="j-go">Join</button>
+    </div>
+    <div id="joinStep2" class="hidden">
+      <div class="step">2 · Send this reply back to the host</div>
+      <textarea id="joinReply" readonly></textarea>
+      <div class="row">
+        <button class="btn small" id="j-share">Share</button>
+        <button class="btn small" id="j-copy">Copy</button>
+      </div>
+    </div>
+    <div class="status" id="joinStatus"></div>
+    <button class="btn ghost back">Cancel</button>
+  </section>
+
+  <section class="screen" id="s-over">
+    <h1 id="overTitle" style="font-size:34px">YOU WIN</h1>
+    <p id="overScore" style="font-size:22px;opacity:1"></p>
+    <button class="btn" id="o-again">Rematch</button>
+    <button class="btn ghost" id="o-menu">Menu</button>
+    <div class="status" id="overStatus"></div>
+  </section>
+
+  <section class="screen" id="s-msg">
+    <h2 id="msgTitle"></h2>
+    <p id="msgBody"></p>
+    <button class="btn back">Menu</button>
+  </section>
+</div>
+
+<div id="toast"></div>
+<div id="hxwrap"><input type="checkbox" id="hxsw" switch><label for="hxsw" id="hxlbl">h</label></div>
+
+<script>
+(() => {
+'use strict';
+/* ---------------------------------------------------------------- constants */
+const W = 360, H = 640, R = 9, PH = 14, PY = [H - 64, 64], BASE = 330, MAXS = 720, WIN = 7, PW = 72;
+const DIFF = { easy: { sp: 170, err: 90 }, normal: { sp: 270, err: 42 }, hard: { sp: 420, err: 12 } };
+const ITEMS = {
+  multi: { l: '×3', cap: 'MULTI', h: 48 },
+  big:   { l: '+',  cap: 'GROW',  h: 140 },
+  small: { l: '−',  cap: 'SHRINK FOE', h: 350 },
+  slow:  { l: 'S',  cap: 'SLOW-MO', h: 200 },
+  fast:  { l: 'F',  cap: 'TURBO', h: 290 }
+};
+const ITEM_BAG = ['multi', 'multi', 'big', 'small', 'slow', 'fast'];
+const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const rnd = Math.random;
+
+/* ------------------------------------------------------------------- canvas */
+const cv = $('c'), ctx = cv.getContext('2d');
+let dpr = 1, cw = 0, ch = 0, vs = 1, ox = 0, oy = 0;
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 3);
+  cw = cv.width = Math.max(1, Math.round(cv.clientWidth * dpr));
+  ch = cv.height = Math.max(1, Math.round(cv.clientHeight * dpr));
+  vs = Math.min(cw / W, ch / H); ox = (cw - W * vs) / 2; oy = (ch - H * vs) / 2;
+}
+addEventListener('resize', resize); addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+/* -------------------------------------------------------------------- audio */
+let AC = null, muted = false, lastWall = 0;
+function audio() {
+  if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  if (AC && AC.state === 'suspended') AC.resume();
+}
+function tone(f, d, type = 'square', v = 0.05, f2 = null, delay = 0) {
+  if (muted || !AC) return;
+  const t = AC.currentTime + delay, o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(f, t);
+  if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + d);
+  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+  o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t + d + 0.03);
+}
+const SFX = {
+  hit: (s) => { tone(380 + s * 0.4, 0.09, 'square', 0.05, 760 + s * 0.4); tone(90, 0.12, 'sine', 0.12, 50); },
+  wall: () => { const n = performance.now(); if (n - lastWall > 70) { lastWall = n; tone(240, 0.05, 'triangle', 0.05); } },
+  bump: () => tone(330, 0.12, 'sine', 0.07, 880),
+  win: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.16, 'square', 0.045, null, i * 0.07)),
+  lose: () => [330, 262, 196].forEach((f, i) => tone(f, 0.2, 'sawtooth', 0.04, null, i * 0.09)),
+  item: () => { tone(660, 0.1, 'square', 0.05); tone(990, 0.16, 'square', 0.05, null, 0.09); },
+  morph: () => tone(110, 0.7, 'sawtooth', 0.035, 700),
+  serve: () => tone(520, 0.06, 'sine', 0.05),
+  tick: () => tone(440, 0.08, 'sine', 0.05),
+  over: (won) => won ? [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, 0.25, 'triangle', 0.07, null, i * 0.1))
+                     : [392, 330, 262, 196, 131].forEach((f, i) => tone(f, 0.28, 'sawtooth', 0.04, null, i * 0.12))
+};
+function haptic() {
+  try {
+    if (navigator.vibrate) { navigator.vibrate(12); return; }
+    $('hxlbl').click(); // iOS 18+ switch-input trick; best-effort only
+  } catch (e) {}
+}
+
+/* ----------------------------------------------------------- particles / fx */
+const parts = [], rings = [], trails = new Map(); let shake = 0, banner = null;
+const stars = Array.from({ length: 70 }, () => ({ x: rnd(), y: rnd(), v: 0.01 + rnd() * 0.04, z: 1 + rnd() * 1.8, a: 0.2 + rnd() * 0.6 }));
+function burst(x, y, hue, n = 14, sp = 170) {
+  for (let i = 0; i < n; i++) {
+    const a = rnd() * 6.283, v = sp * (0.3 + rnd() * 0.9), l = 0.5 + rnd() * 0.5;
+    parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, l, m: l, h: hue + rnd() * 50 - 25, s: 1.5 + rnd() * 3, q: rnd() < 0.5 });
+  }
+  if (parts.length > 420) parts.splice(0, parts.length - 420);
+  rings.push({ x, y, r: 5, l: 0.5, h: hue });
+}
+function fxUpdate(dt) {
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.l -= dt; if (p.l <= 0) { parts.splice(i, 1); continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.97; p.vy *= 0.97;
+  }
+  for (let i = rings.length - 1; i >= 0; i--) { const r = rings[i]; r.l -= dt; r.r += 150 * dt; if (r.l <= 0) rings.splice(i, 1); }
+  shake = Math.max(0, shake - dt * 30);
+  if (banner) { banner.l -= dt; if (banner.l <= 0) banner = null; }
+}
+
+/* -------------------------------------------------------------------- match */
+let G = null, seq = 0, lastSeq = 0, snapAt = 0, lastSnapSend = 0, lastPadSend = 0, evqSent = 0;
+const meIdx = () => (G && G.mode === 'guest' ? 1 : 0);
+
+function newMatch(mode, diff) {
+  return {
+    mode, t: 0, phase: 'cd', cd: 3, startCd: true, score: [0, 0], winner: -1,
+    balls: [], items: [], obs: [], evq: [], overShown: false,
+    pad: [0, 1].map(() => ({ x: W / 2, tx: W / 2, w: PW, big: 0, small: 0 })),
+    spd: { mult: 1, target: 1, until: 0, kind: '' },
+    nid: 1, serveDir: rnd() < 0.5 ? 1 : -1, nextItem: 7, nextMorph: 9, layout: 0,
+    ai: DIFF[diff] || DIFF.normal, aiT: 0, aiErr: 0
+  };
+}
+
+/* obstacle layouts (host only) */
+const C = (f) => ({ k: 'c', f }), Rt = (f) => ({ k: 'r', f });
+const LAYOUTS = [
+  () => [],
+  () => [C(() => ({ x: 180, y: 320, r: 24 })), C(() => ({ x: 80, y: 250, r: 16 })), C(() => ({ x: 280, y: 390, r: 16 }))],
+  () => [Rt(t => ({ x: 180 + Math.sin(t * 1.1) * 100, y: 250, w: 76, h: 10, a: 0 })), Rt(t => ({ x: 180 - Math.sin(t * 1.1) * 100, y: 390, w: 76, h: 10, a: 0 }))],
+  () => [Rt(t => ({ x: 180, y: 320, w: 130, h: 8, a: t * 1.3 })), C(() => ({ x: 50, y: 320, r: 14 })), C(() => ({ x: 310, y: 320, r: 14 }))],
+  () => [C(t => ({ x: 180 + Math.cos(t * 1.2) * 85, y: 320 + Math.sin(t * 1.2) * 85, r: 18 })), C(t => ({ x: 180 - Math.cos(t * 1.2) * 85, y: 320 - Math.sin(t * 1.2) * 85, r: 18 }))],
+  () => [Rt(t => ({ x: 52, y: 320 + Math.sin(t) * 70, w: 12, h: 110, a: 0 })), Rt(t => ({ x: 308, y: 320 - Math.sin(t) * 70, w: 12, h: 110, a: 0 })), C(() => ({ x: 180, y: 320, r: 14 }))]
+];
+function morph(first) {
+  for (const o of G.obs) o.dying = true;
+  let n; do { n = 1 + Math.floor(rnd() * (LAYOUTS.length - 1)); } while (n === G.layout);
+  G.layout = n;
+  for (const d of LAYOUTS[n]()) G.obs.push({ id: G.nid++, k: d.k, f: d.f, s: 0, dying: false, x: 0, y: 0, r: 0, w: 0, h: 0, a: 0, ...d.f(G.t), s: 0 });
+  G.nextMorph = G.t + 14 + rnd() * 6;
+  if (!first) ev({ e: 'morph' });
+}
+function ev(e) { G.evq.push(e); }
+
+function serve() {
+  const a = (rnd() - 0.5) * 0.9;
+  G.balls.push({ id: G.nid++, x: W / 2, y: H / 2, vx: BASE * Math.sin(a), vy: G.serveDir * BASE * Math.cos(a), owner: -1 });
+  G.startCd = false; ev({ e: 'serve' });
+}
+function addBall(src, ang) {
+  const c = Math.cos(ang), s = Math.sin(ang);
+  G.balls.push({ id: G.nid++, x: src.x, y: src.y, vx: src.vx * c - src.vy * s, vy: src.vx * s + src.vy * c, owner: src.owner });
+}
+function applyItem(type, owner, ball) {
+  const opp = 1 - owner;
+  if (type === 'multi') { if (G.balls.length <= 4) { addBall(ball, 0.5); addBall(ball, -0.5); } }
+  else if (type === 'big') G.pad[owner].big = 10;
+  else if (type === 'small') G.pad[opp].small = 10;
+  else if (type === 'slow') { G.spd.target = 0.6; G.spd.until = G.t + 7; G.spd.kind = 'SLOW'; }
+  else if (type === 'fast') { G.spd.target = 1.5; G.spd.until = G.t + 7; G.spd.kind = 'TURBO'; }
+}
+
+function aiStep(dt) {
+  const p = G.pad[1], d = G.ai;
+  G.aiT -= dt; if (G.aiT <= 0) { G.aiT = 0.35; G.aiErr = (rnd() - 0.5) * d.err; }
+  let tgt = W / 2 + Math.sin(G.t * 0.8) * 50, best = 1e9;
+  for (const b of G.balls) {
+    if (b.vy < 0 && b.y - PY[1] < best) {
+      best = b.y - PY[1];
+      const tt = Math.max(0, (b.y - PY[1]) / Math.abs(b.vy));
+      let x = b.x + b.vx * G.spd.mult * tt; const L = W - 2 * R, P = 2 * L;
+      let m = (((x - R) % P) + P) % P; x = R + (m > L ? P - m : m);
+      tgt = x + G.aiErr;
+    }
+  }
+  tgt = clamp(tgt, p.w / 2, W - p.w / 2);
+  p.x += clamp(tgt - p.x, -d.sp * dt, d.sp * dt); p.tx = p.x;
+}
+
+function padUpdate(dt, ai) {
+  for (let i = 0; i < 2; i++) {
+    const p = G.pad[i];
+    if (!(ai && i === 1)) {
+      p.x += (p.tx - p.x) * Math.min(1, 22 * dt);
+    }
+    p.x = clamp(p.x, p.w / 2, W - p.w / 2);
+  }
+}
+
+function step(dt) {
+  G.t += dt;
+  const solo = G.mode === 'solo';
+  for (const p of G.pad) {
+    p.big = Math.max(0, p.big - dt); p.small = Math.max(0, p.small - dt);
+    const tw = PW * (p.big > 0 ? 1.55 : 1) * (p.small > 0 ? 0.58 : 1);
+    p.w += (tw - p.w) * Math.min(1, 9 * dt);
+  }
+  if (solo && G.phase !== 'over') aiStep(dt);
+  padUpdate(dt, solo);
+  // obstacles
+  for (let i = G.obs.length - 1; i >= 0; i--) {
+    const o = G.obs[i]; Object.assign(o, o.f(G.t));
+    o.s += (o.dying ? -1 : 1) * dt * 2.2; o.s = Math.min(1, o.s);
+    if (o.s <= 0 && o.dying) G.obs.splice(i, 1);
+  }
+  if (G.phase === 'over') return;
+  if (G.t >= G.nextMorph) morph(false);
+  if (G.phase === 'cd') {
+    const before = Math.ceil(G.cd); G.cd -= dt;
+    if (G.startCd && Math.ceil(G.cd) !== before && G.cd > 0) ev({ e: 'tick' });
+    if (G.cd <= 0) { G.phase = 'play'; serve(); }
+    return;
+  }
+  // speed effect
+  if (G.spd.until && G.t > G.spd.until) { G.spd.target = 1; G.spd.until = 0; G.spd.kind = ''; }
+  G.spd.mult += (G.spd.target - G.spd.mult) * Math.min(1, 6 * dt);
+  // items
+  if (G.t >= G.nextItem && G.items.length < 2) {
+    const type = ITEM_BAG[Math.floor(rnd() * ITEM_BAG.length)];
+    G.items.push({ id: G.nid++, type, bx: 60 + rnd() * (W - 120), by: H * 0.34 + rnd() * H * 0.32, x: 0, y: 0, age: 0 });
+    G.nextItem = G.t + 6 + rnd() * 5;
+  }
+  for (let i = G.items.length - 1; i >= 0; i--) {
+    const it = G.items[i]; it.age += dt;
+    it.x = it.bx + Math.sin(G.t * 1.7 + it.id) * 9; it.y = it.by + Math.cos(G.t * 1.3 + it.id) * 7;
+    if (it.age > 14) G.items.splice(i, 1);
+  }
+  // balls
+  const n = Math.max(1, Math.ceil(dt / (1 / 180))), sub = dt / n, m = G.spd.mult;
+  for (let s = 0; s < n; s++) for (const b of G.balls) ballStep(b, sub, m);
+  for (let i = G.balls.length - 1; i >= 0; i--) {
+    const b = G.balls[i];
+    if (b.y > H + R * 2 || b.y < -R * 2) {
+      const who = b.y < 0 ? 0 : 1;           // who scores
+      G.score[who]++; G.serveDir = who === 0 ? -1 : 1;
+      ev({ e: 'score', w: who, x: b.x, y: who === 0 ? 0 : H });
+      G.balls.splice(i, 1);
+    }
+  }
+  if (!G.balls.length) {
+    if (G.score[0] >= WIN || G.score[1] >= WIN) {
+      G.phase = 'over'; G.winner = G.score[0] > G.score[1] ? 0 : 1; ev({ e: 'over', w: G.winner });
+    } else { G.phase = 'cd'; G.cd = 1.3; }
+  }
+}
+
+function reflect(b, nx, ny) {
+  const dot = b.vx * nx + b.vy * ny;
+  if (dot < 0) { b.vx -= 2 * dot * nx; b.vy -= 2 * dot * ny; return true; }
+  return false;
+}
+function ballStep(b, dt, m) {
+  b.x += b.vx * m * dt; b.y += b.vy * m * dt;
+  if (b.x < R) { b.x = R; b.vx = Math.abs(b.vx); ev({ e: 'wall' }); }
+  else if (b.x > W - R) { b.x = W - R; b.vx = -Math.abs(b.vx); ev({ e: 'wall' }); }
+  // paddles
+  for (let i = 0; i < 2; i++) {
+    const p = G.pad[i], py = PY[i], dir = i === 0 ? -1 : 1;
+    if ((i === 0 && b.vy > 0) || (i === 1 && b.vy < 0)) {
+      const front = i === 0 ? b.y + R >= py - PH / 2 && b.y < py + PH / 2 : b.y - R <= py + PH / 2 && b.y > py - PH / 2;
+      if (front && Math.abs(b.x - p.x) <= p.w / 2 + R * 0.7) {
+        const off = clamp((b.x - p.x) / (p.w / 2), -1, 1), sp = Math.min(Math.hypot(b.vx, b.vy) * 1.045, MAXS), a = off * 0.95;
+        b.vx = sp * Math.sin(a); b.vy = dir * sp * Math.cos(a);
+        b.y = i === 0 ? py - PH / 2 - R : py + PH / 2 + R; b.owner = i;
+        ev({ e: 'hit', x: b.x, y: b.y, p: i, s: sp });
+      }
+    }
+  }
+  // obstacles
+  for (const o of G.obs) {
+    if (o.s < 0.7 || o.dying) continue;
+    if (o.k === 'c') {
+      const dx = b.x - o.x, dy = b.y - o.y, d = Math.hypot(dx, dy), rr = o.r + R;
+      if (d < rr && d > 0.001) {
+        const nx = dx / d, ny = dy / d; b.x = o.x + nx * rr; b.y = o.y + ny * rr;
+        if (reflect(b, nx, ny)) { b.vx *= 1.02; b.vy *= 1.02; ev({ e: 'bump', x: b.x, y: b.y, id: o.id }); }
+      }
+    } else {
+      const ca = Math.cos(o.a), sa = Math.sin(o.a), dx = b.x - o.x, dy = b.y - o.y;
+      const lx = dx * ca + dy * sa, ly = -dx * sa + dy * ca, hw = o.w / 2, hh = o.h / 2;
+      const cx = clamp(lx, -hw, hw), cy = clamp(ly, -hh, hh), ddx = lx - cx, ddy = ly - cy, d2 = ddx * ddx + ddy * ddy;
+      if (d2 < R * R) {
+        let nx, ny, push;
+        if (d2 > 1e-6) { const d = Math.sqrt(d2); nx = ddx / d; ny = ddy / d; push = R - d; }
+        else if (hw - Math.abs(lx) < hh - Math.abs(ly)) { nx = Math.sign(lx) || 1; ny = 0; push = R + hw - Math.abs(lx); }
+        else { nx = 0; ny = Math.sign(ly) || 1; push = R + hh - Math.abs(ly); }
+        const wx = nx * ca - ny * sa, wy = nx * sa + ny * ca;
+        b.x += wx * push; b.y += wy * push;
+        if (reflect(b, wx, wy)) ev({ e: 'bump', x: b.x, y: b.y, id: o.id });
+      }
+    }
+  }
+  // items
+  if (b.owner >= 0) for (let i = G.items.length - 1; i >= 0; i--) {
+    const it = G.items[i];
+    if (Math.hypot(b.x - it.x, b.y - it.y) < R + 15) {
+      G.items.splice(i, 1); applyItem(it.type, b.owner, b);
+      ev({ e: 'item', x: it.x, y: it.y, t: it.type, w: b.owner });
+    }
+  }
+}
+
+/* --------------------------------------------------------------- event fx */
+function handleEvents(list) {
+  const me = meIdx();
+  for (const e of list) {
+    switch (e.e) {
+      case 'hit': {
+        const hue = (e.p === 0 ? 0 : 150) + (performance.now() / 1000) * 24;
+        burst(e.x, e.y, hue, 12, 150); SFX.hit(e.s); if (e.p === me) haptic(); shake = Math.max(shake, 2); break;
+      }
+      case 'wall': SFX.wall(); break;
+      case 'bump': SFX.bump(); burst(e.x, e.y, 200 + (e.id || 0) * 40, 6, 90); break;
+      case 'score': {
+        const won = e.w === me; won ? SFX.win() : SFX.lose();
+        burst(e.x, e.y, won ? 140 : 350, 40, 260); shake = 14; haptic();
+        banner = { txt: won ? '+1' : '−1', h: won ? 140 : 350, l: 0.9, m: 0.9 }; break;
+      }
+      case 'item': {
+        const d = ITEMS[e.t]; SFX.item(); burst(e.x, e.y, d.h, 30, 220);
+        banner = { txt: d.cap === 'SHRINK FOE' ? 'SHRINK!' : d.cap + '!', h: d.h, l: 1.1, m: 1.1 }; break;
+      }
+      case 'morph': SFX.morph(); banner = { txt: 'ARENA SHIFT', h: 270, l: 1.2, m: 1.2 }; break;
+      case 'serve': SFX.serve(); break;
+      case 'tick': SFX.tick(); break;
+      case 'over': SFX.over(e.w === me); break;
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- network */
+let pc = null, chR = null, chU = null, opened = { r: false, u: false }, role = null, discTimer = 0;
+const b64u = (u8) => { let s = ''; for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+const unb64u = (s) => { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; const b = atob(s), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; };
+async function pipe(bytes, stream) {
+  const w = stream.writable.getWriter(); w.write(bytes); w.close();
+  return new Uint8Array(await new Response(stream.readable).arrayBuffer());
+}
+async function pack(obj) {
+  let bytes = new TextEncoder().encode(JSON.stringify(obj)), tag = 'p';
+  if (window.CompressionStream) { try { bytes = await pipe(bytes, new CompressionStream('deflate-raw')); tag = 'z'; } catch (e) {} }
+  return 'PONG1.' + tag + b64u(bytes);
+}
+async function unpack(str) {
+  const m = String(str).match(/PONG1\.([zp])([A-Za-z0-9_-]+)/);
+  if (!m) throw new Error('bad code');
+  let bytes = unb64u(m[2]);
+  if (m[1] === 'z') bytes = await pipe(bytes, new DecompressionStream('deflate-raw'));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+function gather(p) {
+  return new Promise(res => {
+    if (p.iceGatheringState === 'complete') return res();
+    const chk = () => { if (p.iceGatheringState === 'complete') { p.removeEventListener('icegatheringstatechange', chk); res(); } };
+    p.addEventListener('icegatheringstatechange', chk); setTimeout(res, 3500);
+  });
+}
+function closeNet() {
+  clearTimeout(discTimer);
+  for (const c of [chR, chU]) if (c) { c.onclose = null; c.onmessage = null; try { c.close(); } catch (e) {} }
+  if (pc) { pc.onconnectionstatechange = null; try { pc.close(); } catch (e) {} }
+  pc = chR = chU = null; opened = { r: false, u: false }; role = null;
+}
+function wire(ch) {
+  if (ch.label === 'r') chR = ch; else chU = ch;
+  ch.onopen = () => { opened[ch.label] = true; if (opened.r && opened.u) onConnected(); };
+  ch.onmessage = e => { try { onMsg(JSON.parse(e.data)); } catch (err) {} };
+  ch.onclose = () => onDisc();
+}
+function newPC() {
+  pc = new RTCPeerConnection(ICE);
+  pc.onconnectionstatechange = () => {
+    const s = pc && pc.connectionState; clearTimeout(discTimer);
+    if (s === 'failed' || s === 'closed') onDisc();
+    else if (s === 'disconnected') discTimer = setTimeout(onDisc, 5000);
+  };
+}
+const sendR = o => { if (chR && chR.readyState === 'open') chR.send(JSON.stringify(o)); };
+const sendU = o => { if (chU && chU.readyState === 'open') chU.send(JSON.stringify(o)); };
+
+function onConnected() {
+  if (role === 'host') startMatch('host');
+  else setText('joinStatus', 'Connected! Waiting for host to start…');
+}
+function onDisc() {
+  if (!pc && !G) return;
+  const was = !!G; G = null; closeNet(); hud(false);
+  showMsg(was ? 'Connection lost' : 'Connection failed', was ? 'The other player left or the link dropped.' : 'Could not connect. Check both phones have internet or the same Wi-Fi, then try again.');
+}
+function onMsg(m) {
+  if (m.k === 'p' && G && G.mode === 'host') G.pad[1].tx = clamp(m.x, 0, W);
+  else if (m.k === 's' && G && G.mode === 'guest') applySnap(m);
+  else if (m.k === 'ev' && G) handleEvents(m.e);
+  else if (m.k === 'start' && role === 'guest') startMatch('guest');
+  else if (m.k === 'rematch' && G && G.mode === 'host') startMatch('host');
+}
+
+/* host: snapshot → guest */
+function snapshot() {
+  const r = v => Math.round(v * 10) / 10, m = G.spd.mult, a = G.pad[0], c = G.pad[1];
+  return {
+    k: 's', n: ++seq, t: r(G.t), ph: G.phase, cd: r(G.cd), sd: G.startCd ? 1 : 0, sc: G.score, w: G.winner,
+    m: Math.round(m * 100) / 100, sk: G.spd.kind,
+    b: G.balls.map(b => [b.id, r(b.x), r(b.y), r(b.vx * m), r(b.vy * m), b.owner]),
+    i: G.items.map(i => [i.id, i.type, r(i.x), r(i.y), r(i.age)]),
+    o: G.obs.map(o => [o.id, o.k === 'c' ? 0 : 1, r(o.x), r(o.y), r(o.k === 'c' ? o.r : o.w), r(o.h || 0), Math.round(o.a * 100) / 100, Math.round(o.s * 100) / 100]),
+    p: [r(a.x), r(a.w), r(a.big), r(a.small), r(c.w), r(c.big), r(c.small)]
+  };
+}
+function applySnap(s) {
+  if (s.n <= lastSeq) return; lastSeq = s.n; snapAt = performance.now();
+  G.t = s.t; G.phase = s.ph; G.cd = s.cd; G.startCd = !!s.sd; G.score = s.sc; G.winner = s.w;
+  G.spd.mult = s.m; G.spd.kind = s.sk;
+  G.balls = s.b.map(a => ({ id: a[0], x: a[1], y: a[2], vx: a[3], vy: a[4], owner: a[5] }));
+  G.items = s.i.map(a => ({ id: a[0], type: a[1], x: a[2], y: a[3], age: a[4] }));
+  G.obs = s.o.map(a => ({ id: a[0], k: a[1] ? 'r' : 'c', x: a[2], y: a[3], r: a[4], w: a[4], h: a[5], a: a[6], s: a[7] }));
+  const p = s.p, P0 = G.pad[0], P1 = G.pad[1];
+  P0.tx = p[0]; P0.w = p[1]; P0.big = p[2]; P0.small = p[3]; P1.w = p[4]; P1.big = p[5]; P1.small = p[6];
+}
+
+/* ------------------------------------------------------------------ flow */
+function startMatch(mode, diff) {
+  G = newMatch(mode, diff); lastSeq = 0; seq = seq; parts.length = 0; rings.length = 0; trails.clear();
+  if (mode !== 'guest') { morphInit(); }
+  showScreen(null); hud(true); audio();
+  if (mode === 'host') sendR({ k: 'start' });
+  try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {}); } catch (e) {}
+}
+function morphInit() { G.layout = 0; G.nextMorph = 9; }
+function showOver() {
+  const me = meIdx(), won = G.winner === me;
+  $('overTitle').textContent = won ? 'YOU WIN' : 'YOU LOSE';
+  $('overScore').textContent = G.score[me] + ' — ' + G.score[1 - me];
+  setText('overStatus', G.mode === 'guest' ? '' : '');
+  showScreen('s-over');
+}
+function quitToMenu() { G = null; closeNet(); hud(false); showScreen('s-menu'); }
+
+/* -------------------------------------------------------------------- UI */
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('on', s.id === id));
+}
+function hud(on) { $('hud').style.display = on ? 'flex' : 'none'; }
+function setText(id, t) { $(id).textContent = t; }
+let toastT = 0;
+function toast(t) { const e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => e.classList.remove('on'), 2200); }
+function showMsg(title, body) { setText('msgTitle', title); setText('msgBody', body); showScreen('s-msg'); }
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); toast('Copied'); }
+  catch (e) { const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast('Copied'); } catch (_) { toast('Long-press the box to copy'); } ta.remove(); }
+}
+async function shareText(o, fallback) {
+  if (navigator.share) { try { await navigator.share(o); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
+  copyText(fallback);
+}
+async function pasteInto(id) {
+  try { $(id).value = await navigator.clipboard.readText(); $(id).dispatchEvent(new Event('input')); }
+  catch (e) { toast('Long-press the box and choose Paste'); }
+}
+
+let hostLink = '';
+async function startHost() {
+  closeNet(); role = 'host'; showScreen('s-host');
+  $('hostCode').value = ''; $('hostReply').value = ''; setText('hostStatus', 'Creating invite…');
+  if (!window.RTCPeerConnection) { setText('hostStatus', 'This browser does not support WebRTC.'); return; }
+  try {
+    newPC(); wire(pc.createDataChannel('r')); wire(pc.createDataChannel('u', { ordered: false, maxRetransmits: 0 }));
+    await pc.setLocalDescription(await pc.createOffer()); await gather(pc);
+    const code = await pack({ t: 'o', s: pc.localDescription.sdp });
+    hostLink = /^https?:/.test(location.protocol) ? location.href.split('#')[0] + '#j=' + code : code;
+    $('hostCode').value = hostLink; setText('hostStatus', 'Waiting for your friend’s reply code…');
+  } catch (e) { setText('hostStatus', 'Could not create invite: ' + e.message); }
+}
+async function hostConnect() {
+  const v = $('hostReply').value.trim(); if (!v || !pc || role !== 'host') return;
+  if (pc.signalingState !== 'have-local-offer') return;
+  try {
+    const o = await unpack(v); if (o.t !== 'a') throw new Error('not a reply code');
+    await pc.setRemoteDescription({ type: 'answer', sdp: o.s }); setText('hostStatus', 'Connecting…');
+  } catch (e) { setText('hostStatus', 'That reply code looks wrong — copy the whole message.'); }
+}
+async function startJoin(code) {
+  closeNet(); role = 'guest'; showScreen('s-join');
+  $('joinStep2').classList.add('hidden'); $('joinReply').value = '';
+  if (code) $('joinCode').value = code;
+  const v = $('joinCode').value.trim(); if (!v) { setText('joinStatus', 'Paste the invite first.'); return; }
+  if (!window.RTCPeerConnection) { setText('joinStatus', 'This browser does not support WebRTC.'); return; }
+  setText('joinStatus', 'Preparing reply…');
+  try {
+    const o = await unpack(v); if (o.t !== 'o') throw new Error('not an invite');
+    newPC(); pc.ondatachannel = e => wire(e.channel);
+    await pc.setRemoteDescription({ type: 'offer', sdp: o.s });
+    await pc.setLocalDescription(await pc.createAnswer()); await gather(pc);
+    $('joinReply').value = await pack({ t: 'a', s: pc.localDescription.sdp });
+    $('joinStep2').classList.remove('hidden');
+    setText('joinStatus', 'Send the reply to the host, then keep this page open.');
+  } catch (e) { setText('joinStatus', 'That invite looks wrong — paste the whole link or code.'); closeNet(); role = 'guest'; }
+}
+
+/* buttons */
+$('m-solo').onclick = () => { audio(); showScreen('s-ai'); };
+document.querySelectorAll('[data-diff]').forEach(b => b.onclick = () => { audio(); closeNet(); startMatch('solo', b.dataset.diff); });
+$('m-host').onclick = () => { audio(); startHost(); };
+$('m-join').onclick = () => { audio(); closeNet(); role = 'guest'; $('joinStep2').classList.add('hidden'); $('joinCode').value = ''; setText('joinStatus', ''); showScreen('s-join'); };
+document.querySelectorAll('.back').forEach(b => b.onclick = quitToMenu);
+$('h-share').onclick = () => shareText({ title: 'Neon Pong', text: 'Join my Neon Pong match!', url: hostLink }, hostLink);
+$('h-copy').onclick = () => copyText($('hostCode').value);
+$('h-paste').onclick = () => pasteInto('hostReply');
+$('h-connect').onclick = hostConnect;
+$('hostReply').addEventListener('input', () => { if (/PONG1\.[zp][A-Za-z0-9_-]{20,}/.test($('hostReply').value)) hostConnect(); });
+$('j-paste').onclick = () => pasteInto('joinCode');
+$('j-go').onclick = () => startJoin();
+$('joinCode').addEventListener('input', () => { if (/PONG1\.[zp][A-Za-z0-9_-]{20,}/.test($('joinCode').value) && !pc) startJoin(); });
+$('j-share').onclick = () => shareText({ title: 'Neon Pong reply', text: $('joinReply').value }, $('joinReply').value);
+$('j-copy').onclick = () => copyText($('joinReply').value);
+$('o-again').onclick = () => {
+  audio();
+  if (!G) return;
+  if (G.mode === 'guest') { sendR({ k: 'rematch' }); setText('overStatus', 'Waiting for host…'); }
+  else startMatch(G.mode, G.mode === 'solo' ? (Object.keys(DIFF).find(k => DIFF[k] === G.ai) || 'normal') : undefined);
+};
+$('o-menu').onclick = quitToMenu;
+$('btnQuit').onclick = quitToMenu;
+$('btnMute').onclick = () => { muted = !muted; $('btnMute').textContent = muted ? '🔇' : '🔊'; };
+document.addEventListener('pointerdown', audio, { passive: true });
+
+/* input */
+function setTarget(e) {
+  if (!G || G.phase === 'over') return;
+  const rect = cv.getBoundingClientRect();
+  let lx = ((e.clientX - rect.left) * dpr - ox) / vs;
+  if (G.mode === 'guest') lx = W - lx;
+  const p = G.pad[meIdx()]; p.tx = clamp(lx, p.w / 2, W - p.w / 2);
+}
+cv.addEventListener('pointerdown', e => { try { cv.setPointerCapture(e.pointerId); } catch (_) {} setTarget(e); });
+cv.addEventListener('pointermove', setTarget);
+document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+document.addEventListener('gesturestart', e => e.preventDefault());
+
+/* ------------------------------------------------------------------ render */
+function poly(x, y, r, n, rot) {
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) { const a = rot + i * 6.2832 / n; const px = x + Math.cos(a) * r, py = y + Math.sin(a) * r; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+  ctx.closePath();
+}
+const hsl = (h, s, l, a = 1) => `hsla(${((h % 360) + 360) % 360},${s}%,${l}%,${a})`;
+function glow(c, b) { ctx.shadowColor = c; ctx.shadowBlur = b * vs; }
+function noGlow() { ctx.shadowBlur = 0; ctx.shadowColor = 'transparent'; }
+
+function draw(now) {
+  const T = now / 1000, hue = (T * 24) % 360;
+  document.documentElement.style.setProperty('--h', Math.round(hue));
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  ctx.fillStyle = '#05060f'; ctx.fillRect(0, 0, cw, ch);
+  const bg = ctx.createRadialGradient(cw / 2, ch / 2, 0, cw / 2, ch / 2, Math.max(cw, ch) * 0.75);
+  bg.addColorStop(0, hsl(hue, 80, 13)); bg.addColorStop(1, hsl(hue + 120, 80, 3));
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, cw, ch);
+  ctx.fillStyle = '#fff';
+  for (const s of stars) { ctx.globalAlpha = s.a * (0.6 + 0.4 * Math.sin(T * 2 + s.x * 9)); ctx.fillRect(s.x * cw, ((s.y + T * s.v) % 1) * ch, s.z * dpr, s.z * dpr); }
+  ctx.globalAlpha = 1;
+
+  const flip = G && G.mode === 'guest';
+  const sx = shake ? (rnd() - 0.5) * shake * vs : 0, sy = shake ? (rnd() - 0.5) * shake * vs : 0;
+  ctx.save();
+  if (flip) { ctx.translate(ox + W * vs + sx, oy + H * vs + sy); ctx.scale(-vs, -vs); }
+  else { ctx.translate(ox + sx, oy + sy); ctx.scale(vs, vs); }
+
+  // court
+  ctx.fillStyle = 'rgba(4,7,20,.6)'; ctx.fillRect(0, 0, W, H);
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
+  ctx.lineWidth = 1; ctx.strokeStyle = hsl(hue, 100, 60, 0.1); ctx.beginPath();
+  for (let x = 0; x <= W; x += 40) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+  const off = (T * 18) % 40; for (let y = -40 + off; y <= H; y += 40) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+  ctx.stroke(); ctx.restore();
+  glow(hsl(hue + 75, 100, 60), 14); ctx.lineWidth = 2; ctx.strokeStyle = hsl(hue + 75, 100, 65, 0.7); ctx.strokeRect(1, 1, W - 2, H - 2);
+  ctx.lineWidth = 4; ctx.strokeStyle = hsl(hue, 100, 62); ctx.beginPath(); ctx.moveTo(0, H - 1); ctx.lineTo(W, H - 1); ctx.stroke();
+  ctx.strokeStyle = hsl(hue + 150, 100, 62); ctx.beginPath(); ctx.moveTo(0, 1); ctx.lineTo(W, 1); ctx.stroke();
+  noGlow();
+  // morphing centre line
+  const sides = 3 + (Math.floor(T / 2.5) % 4);
+  ctx.lineWidth = 1.5;
+  for (let x = 24; x < W; x += 34) {
+    ctx.strokeStyle = hsl(hue + x * 0.4, 100, 65, 0.45); poly(x, H / 2, 5 + Math.sin(T * 3 + x) * 1.5, sides, T * 1.5 + x); ctx.stroke();
+  }
+
+  if (G) drawGame(T, hue, now);
+
+  // particles + rings
+  ctx.globalCompositeOperation = 'lighter';
+  for (const r of rings) { ctx.strokeStyle = hsl(r.h, 100, 60, Math.max(0, r.l * 1.6)); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, 6.2832); ctx.stroke(); }
+  for (const p of parts) { ctx.fillStyle = hsl(p.h, 100, 62, Math.max(0, p.l / p.m)); if (p.q) ctx.fillRect(p.x - p.s / 2, p.y - p.s / 2, p.s, p.s); else { ctx.beginPath(); ctx.arc(p.x, p.y, p.s / 2, 0, 6.2832); ctx.fill(); } }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
+
+  if (G) drawHud(T, hue);
+}
+
+function rpos(b, now) {
+  if (!G || G.mode !== 'guest') return b;
+  const d = Math.min(0.08, (now - snapAt) / 1000);
+  return { x: clamp(b.x + b.vx * d, R, W - R), y: b.y + b.vy * d, id: b.id };
+}
+
+function drawGame(T, hue, now) {
+  // obstacles
+  for (const o of G.obs) {
+    if (o.s <= 0.01) continue;
+    const oh = hue + 200 + o.id * 40, pulse = 1 + Math.sin(T * 4 + o.id) * 0.05;
+    ctx.save(); ctx.translate(o.x, o.y);
+    glow(hsl(oh, 100, 60), 12); ctx.lineWidth = 2.5; ctx.strokeStyle = hsl(oh, 100, 68, o.s); ctx.fillStyle = hsl(oh, 100, 55, 0.2 * o.s);
+    if (o.k === 'c') {
+      ctx.scale(o.s * pulse, o.s * pulse);
+      ctx.beginPath(); ctx.arc(0, 0, o.r, 0, 6.2832); ctx.fill(); ctx.stroke();
+      noGlow(); ctx.setLineDash([4, 5]); ctx.lineDashOffset = -T * 20; ctx.beginPath(); ctx.arc(0, 0, o.r * 0.55, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]);
+    } else {
+      ctx.rotate(o.a); ctx.scale(o.s, o.s);
+      ctx.fillRect(-o.w / 2, -o.h / 2, o.w, o.h); ctx.strokeRect(-o.w / 2, -o.h / 2, o.w, o.h);
+    }
+    noGlow(); ctx.restore();
+  }
+  // items
+  for (const it of G.items) {
+    const d = ITEMS[it.type]; if (!d) continue;
+    const fade = it.age > 11 ? (Math.sin(T * 14) > 0 ? 1 : 0.3) : 1, pop = Math.min(1, it.age * 4);
+    ctx.save(); ctx.translate(it.x, it.y); ctx.scale(pop, pop); ctx.globalAlpha = fade;
+    glow(hsl(d.h, 100, 60), 14); ctx.fillStyle = hsl(d.h, 100, 50, 0.3); ctx.strokeStyle = hsl(d.h, 100, 68); ctx.lineWidth = 2;
+    poly(0, 0, 15 + Math.sin(T * 5) * 1.2, 6, T * 0.9); ctx.fill(); ctx.stroke(); noGlow();
+    if (G.mode === 'guest') ctx.rotate(Math.PI); // keep text upright (canvas is flipped)
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 14px -apple-system,system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(d.l, 0, 1);
+    ctx.font = 'bold 7px -apple-system,system-ui,sans-serif'; ctx.fillStyle = hsl(d.h, 100, 80);
+    ctx.fillText(d.cap, 0, 24);
+    ctx.restore();
+  }
+  // balls + trails
+  const seen = new Set();
+  for (const b0 of G.balls) {
+    const b = rpos(b0, now); seen.add(b0.id);
+    let tr = trails.get(b0.id); if (!tr) { tr = []; trails.set(b0.id, tr); }
+    tr.push({ x: b.x, y: b.y }); if (tr.length > 16) tr.shift();
+    const bh = hue + b0.id * 70 + Math.hypot(b0.vx, b0.vy) * 0.15;
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < tr.length; i++) {
+      const k = i / tr.length; ctx.fillStyle = hsl(bh - (1 - k) * 60, 100, 55, k * 0.4);
+      ctx.beginPath(); ctx.arc(tr[i].x, tr[i].y, R * (0.3 + k * 0.7), 0, 6.2832); ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    const n = 3 + ((Math.floor(T / 3) + b0.id) % 5); // 3..7 sides, 7 ≈ circle
+    glow(hsl(bh, 100, 60), 18); ctx.fillStyle = hsl(bh, 100, 72); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+    if (n >= 7) { ctx.beginPath(); ctx.arc(b.x, b.y, R, 0, 6.2832); } else poly(b.x, b.y, R * 1.15, n, T * 4 + b0.id);
+    ctx.fill(); ctx.stroke(); noGlow();
+  }
+  for (const id of trails.keys()) if (!seen.has(id)) trails.delete(id);
+  // paddles
+  for (let i = 0; i < 2; i++) {
+    const p = G.pad[i], ph = hue + i * 150, y = PY[i], w = p.w;
+    const grad = ctx.createLinearGradient(p.x - w / 2, 0, p.x + w / 2, 0);
+    grad.addColorStop(0, hsl(ph, 100, 55)); grad.addColorStop(0.5, hsl(ph + 40, 100, 78)); grad.addColorStop(1, hsl(ph + 80, 100, 55));
+    glow(hsl(ph, 100, 60), 20); ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(p.x - w / 2, y - PH / 2, w, PH, PH / 2) : ctx.rect(p.x - w / 2, y - PH / 2, w, PH); ctx.fill(); noGlow();
+    ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.6; ctx.fillRect(p.x - w / 2 + 6, y - 1, w - 12, 2); ctx.globalAlpha = 1;
+    // thin timer bars
+    const dir = i === 0 ? -1 : 1;
+    if (p.big > 0) { ctx.fillStyle = hsl(140, 100, 60, 0.8); ctx.fillRect(p.x - w / 2, y + dir * 12, w * p.big / 10, 2); }
+    if (p.small > 0) { ctx.fillStyle = hsl(350, 100, 60, 0.8); ctx.fillRect(p.x - w / 2, y + dir * 16, w * p.small / 10, 2); }
+  }
+}
+
+function drawHud(T, hue) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const me = meIdx(), s = vs;
+  ctx.textBaseline = 'middle';
+  const fs = 54 * s; ctx.font = `800 ${fs}px -apple-system,system-ui,sans-serif`; ctx.textAlign = 'left';
+  ctx.fillStyle = hsl(hue + (1 - me) * 150, 100, 70, 0.28); ctx.fillText(G.score[1 - me], ox + 20 * s, oy + (H / 2 - 54) * s);
+  ctx.fillStyle = hsl(hue + me * 150, 100, 70, 0.28); ctx.fillText(G.score[me], ox + 20 * s, oy + (H / 2 + 54) * s);
+  // effect tag
+  if (G.spd.kind) {
+    ctx.font = `700 ${12 * s}px -apple-system,system-ui,sans-serif`; ctx.textAlign = 'right';
+    ctx.fillStyle = hsl(G.spd.kind === 'SLOW' ? 200 : 290, 100, 72, 0.9); ctx.fillText(G.spd.kind, ox + (W - 18) * s, oy + (H / 2) * s + 22 * s);
+  }
+  ctx.textAlign = 'center';
+  if (G.phase === 'cd' && G.startCd && G.cd > 0) {
+    const f = G.cd % 1, sc = 1 + (1 - f) * 0.35;
+    ctx.font = `900 ${110 * s * sc}px -apple-system,system-ui,sans-serif`;
+    glow(hsl(hue, 100, 60), 30); ctx.fillStyle = hsl(hue, 100, 75, 0.25 + f * 0.75); ctx.fillText(Math.ceil(G.cd), cw / 2, oy + (H / 2) * s); noGlow();
+  }
+  if (banner) {
+    const k = banner.l / banner.m, sc = 1 + (1 - k) * 0.25;
+    ctx.font = `900 ${34 * s * sc}px -apple-system,system-ui,sans-serif`;
+    glow(hsl(banner.h, 100, 60), 24); ctx.fillStyle = hsl(banner.h, 100, 78, Math.min(1, k * 2)); ctx.fillText(banner.txt, cw / 2, oy + (H * 0.30) * s); noGlow();
+  }
+}
+
+/* -------------------------------------------------------------------- loop */
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (G) {
+    if (G.mode === 'guest') {
+      // local interpolation only
+      for (const p of G.pad) { p.x += (p.tx - p.x) * Math.min(1, 22 * dt); p.x = clamp(p.x, p.w / 2, W - p.w / 2); }
+      if (now - lastPadSend > 33) { lastPadSend = now; sendU({ k: 'p', x: Math.round(G.pad[1].tx * 10) / 10 }); }
+    } else {
+      step(dt);
+      if (G.evq.length) { const list = G.evq; G.evq = []; handleEvents(list); if (G.mode === 'host') sendR({ k: 'ev', e: list }); }
+      if (G.mode === 'host' && now - lastSnapSend > 32) { lastSnapSend = now; sendU(snapshot()); }
+    }
+    if (G.phase === 'over' && !G.overShown) { G.overShown = true; const g = G; setTimeout(() => { if (G === g) showOver(); }, 1100); }
+  }
+  fxUpdate(dt);
+  draw(now);
+  requestAnimationFrame(loop);
+}
+
+/* ------------------------------------------------------------------- boot */
+resize(); requestAnimationFrame(loop);
+const hm = location.hash.match(/j=(PONG1\.[zp][A-Za-z0-9_-]+)/);
+if (hm) { history.replaceState(null, '', location.pathname + location.search); startJoin(hm[1]); }
+window.__pong = { get G() { return G; }, startMatch };
+})();
+</script>
+</body>
+</html>
