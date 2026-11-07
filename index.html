@@ -49,6 +49,7 @@ textarea{-webkit-user-select:text;user-select:text;width:100%;height:76px;margin
     <button class="btn" id="m-join">Join a match</button>
     <button class="btn ghost" id="m-manual" style="font-size:12px;padding:9px">Offline / manual pairing</button>
     <p style="font-size:12px;opacity:.55">Drag your finger left / right to move your paddle. First to 7 wins.</p>
+    <p id="ver" style="font-size:11px;opacity:.4;margin:0">build v4 · retry+diagnostics</p>
   </section>
 
   <section class="screen" id="s-ai">
@@ -592,7 +593,7 @@ function startRoomJoin(pass) {
         return;
       }
       if (s > 0 && s % 9 === 0 && !(opened.r || opened.u)) attempt(); // host may have been asleep: send a fresh request
-      setText('rjStatus', notFound ? 'Waiting for the host’s room… (' + s + 's)' : 'Connecting to host… (' + s + 's, ' + st + ')');
+      setText('rjStatus', notFound ? 'Waiting for the host’s room… (' + s + 's) [v4]' : 'Connecting to host… (' + s + 's, ' + st + ') [v4]');
     }, 1000);
   });
   p.on('error', e => {
