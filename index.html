@@ -495,8 +495,8 @@ function closeNet() {
 // Works with both a native RTCDataChannel (manual pairing) and a PeerJS DataConnection (room password).
 function wire(ch) {
   const pj = !!ch.peer, lab = ch.label, gen = netGen;
-  if (lab === 'r') chR = ch; else chU = ch;
-  const open = () => { if (gen !== netGen) return; opened[lab] = true; if (opened.r && opened.u) onConnected(); };
+  if (!pj) { if (lab === 'r') chR = ch; else chU = ch; }
+  const open = () => { if (gen !== netGen) return; if (lab === 'r') chR = ch; else chU = ch; opened[lab] = true; if (opened.r && opened.u) onConnected(); };
   const msg = d => { if (gen !== netGen) return; try { onMsg(pj ? d : JSON.parse(d)); } catch (err) {} };
   if (pj) {
     ch.on('open', open); ch.on('data', msg); ch.on('error', () => {});
@@ -507,52 +507,103 @@ function wire(ch) {
   }
 }
 const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
-const mkPeer = id => new Peer(id, Object.assign({ debug: 0 }, window.PONG_PEER_OPTS || {}));
+const PEER_ICE = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  { urls: 'turn:eu-0.turn.peerjs.com:3478', username: 'peerjs', credential: 'peerjsp' },
+  { urls: 'turn:us-0.turn.peerjs.com:3478', username: 'peerjs', credential: 'peerjsp' },
+  { urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turns:openrelay.metered.ca:443?transport=tcp'], username: 'openrelayproject', credential: 'openrelayproject' }
+];
+const mkPeer = id => new Peer(id, Object.assign({ debug: 0, config: { iceServers: PEER_ICE, iceCandidatePoolSize: 2 } }, window.PONG_PEER_OPTS || {}));
 const WORDS = ['nova', 'volt', 'laser', 'pixel', 'comet', 'orbit', 'flux', 'neon', 'warp', 'pulse'];
 const randPass = () => WORDS[Math.floor(rnd() * WORDS.length)] + '-' + (100 + Math.floor(rnd() * 900));
 const baseUrl = () => /^https?:/.test(location.protocol) ? location.href.split('#')[0] : '';
 
-function startRoomHost() {
+let hostRetry = 0, hostBusy = false;
+function startRoomHost(auto) {
   const name = slug($('roomName').value);
   if (name.length < 3) { setText('roomStatus', 'Pick a password of at least 3 letters or numbers.'); return; }
   if (typeof Peer === 'undefined') { setText('roomStatus', 'Could not load the connection library — check your internet.'); return; }
   closeNet(); role = 'host'; const gen = netGen; let guest = null;
-  $('roomName').value = name; $('roomCreate').disabled = true; $('roomShare').classList.add('hidden'); setText('roomStatus', 'Creating room…');
+  if (!auto) hostRetry = 0;
+  $('roomName').value = name; $('roomCreate').disabled = true; $('roomShare').classList.add('hidden'); setText('roomStatus', auto ? 'Re-opening room…' : 'Creating room…');
   const p = peer = mkPeer('neonpong-' + name);
   p.on('open', () => {
     if (gen !== netGen) return;
+    hostRetry = 0;
     hostLink = baseUrl() ? baseUrl() + '#r=' + name : name; $('roomLink').value = hostLink; $('roomShare').classList.remove('hidden');
-    setText('roomStatus', 'Waiting for your friend… keep this screen open.');
+    setText('roomStatus', 'Room open. Waiting for your friend… keep this screen open.');
   });
   p.on('connection', c => {
     if (gen !== netGen) return;
     if (guest && guest !== c.peer) { c.on('open', () => c.close()); return; } // room is full
-    guest = c.peer; wire(c);
+    guest = c.peer; setText('roomStatus', 'Friend found — connecting…'); wire(c);
+    c.on('iceStateChanged', st => { if (!G && gen === netGen) setText('roomStatus', 'Friend found — linking phones (' + st + ')…'); });
   });
   p.on('disconnected', () => { if (gen === netGen && !G) { try { p.reconnect(); } catch (e) {} } });
   p.on('error', e => {
     if (gen !== netGen) return;
-    if (e.type === 'unavailable-id') { setText('roomStatus', 'That password is already in use — choose another.'); closeNet(); }
-    else if (!G) setText('roomStatus', 'Connection problem (' + e.type + '). Check your internet.');
+    if (e.type === 'unavailable-id') {
+      if (auto && hostRetry++ < 30) { hostBusy = true; setText('roomStatus', 'Re-opening room…'); setTimeout(() => { hostBusy = false; if (gen === netGen) startRoomHost(true); }, 3000); return; }
+      hostBusy = false;
+      setText('roomStatus', 'That password is already in use — choose another.'); closeNet();
+    } else if (!G && !guest) setText('roomStatus', 'Connection problem (' + e.type + '). Retrying…');
     $('roomCreate').disabled = false;
   });
 }
+// Keeps the room alive: iOS suspends Safari when you switch to Messages to share the link.
+function hostCheck() {
+  if (role !== 'host' || !peer || G || opened.r || opened.u || hostBusy) return;
+  if (peer.destroyed) startRoomHost(true);
+  else if (peer.disconnected) { try { peer.reconnect(); } catch (e) {} }
+}
+setInterval(hostCheck, 2500);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) hostCheck(); });
+addEventListener('pageshow', hostCheck);
+
 function startRoomJoin(pass) {
   const name = slug(pass || $('joinName').value);
   showScreen('s-join'); $('joinName').value = name;
   if (name.length < 3) { setText('rjStatus', 'Enter the host’s password.'); return; }
   if (typeof Peer === 'undefined') { setText('rjStatus', 'Could not load the connection library — check your internet.'); return; }
   closeNet(); role = 'guest'; const gen = netGen; setText('rjStatus', 'Connecting…');
-  const p = peer = mkPeer(undefined);
-  const fail = t => { if (gen === netGen && !(opened.r && opened.u)) { setText('rjStatus', t); closeNet(); } };
+  let tries = 0, conns = [], retryT = 0, notFound = false, hist = [];
+  const t0 = Date.now(), p = peer = mkPeer(undefined);
+  const live = () => gen === netGen && !(opened.r && opened.u);
+  const fail = t => { if (live()) { setText('rjStatus', t); closeNet(); } };
+  const attempt = () => {
+    if (!live()) return; tries++; notFound = false;
+    for (const c of conns) { try { c.close(); } catch (e) {} }
+    const id = 'neonpong-' + name;
+    const r = p.connect(id, { label: 'r', reliable: true, serialization: 'json' });
+    const u = p.connect(id, { label: 'u', reliable: false, serialization: 'json' });
+    r.on('iceStateChanged', st => hist.push(st));
+    wire(r); wire(u); conns = [r, u];
+  };
   p.on('open', () => {
     if (gen !== netGen) return;
-    const id = 'neonpong-' + name;
-    wire(p.connect(id, { label: 'r', reliable: true, serialization: 'json' }));
-    wire(p.connect(id, { label: 'u', reliable: false, serialization: 'json' }));
-    setTimeout(() => fail('Could not reach the room. Check the password and that the host has created it.'), 15000);
+    attempt();
+    const iv = setInterval(() => {
+      if (!live()) { clearInterval(iv); return; }
+      const s = Math.round((Date.now() - t0) / 1000), st = hist.length ? hist[hist.length - 1] : 'no reply from host';
+      if (s >= 40) {
+        clearInterval(iv);
+        fail(notFound ? 'Room not found. Check the password, and make sure the host has created the room and kept the game open.'
+          : 'Could not link the phones. Last status: ' + (hist.join(' → ') || 'no reply from host') + '. Make sure the host kept the game open, or try another network (Wi-Fi vs mobile data).');
+        return;
+      }
+      if (s > 0 && s % 9 === 0 && !(opened.r || opened.u)) attempt(); // host may have been asleep: send a fresh request
+      setText('rjStatus', notFound ? 'Waiting for the host’s room… (' + s + 's)' : 'Connecting to host… (' + s + 's, ' + st + ')');
+    }, 1000);
   });
-  p.on('error', e => fail(e.type === 'peer-unavailable' ? 'Room not found. Check the password, and make sure the host has created the room.' : 'Connection problem (' + e.type + '). Check your internet.'));
+  p.on('error', e => {
+    if (!live()) return;
+    if (e.type === 'peer-unavailable') {
+      notFound = true;
+      if (!retryT) retryT = setTimeout(() => { retryT = 0; attempt(); }, 3000); // host may still be re-opening its room
+    } else if (['network', 'server-error', 'socket-error', 'socket-closed'].includes(e.type)) {
+      fail('Can’t reach the matchmaking service. Check your internet connection and try again.');
+    } else fail('Connection problem (' + e.type + ').');
+  });
 }
 function newPC() {
   pc = new RTCPeerConnection(ICE);
@@ -567,7 +618,7 @@ const sendR = o => tx(chR, o);
 const sendU = o => tx(chU, o);
 
 function onConnected() {
-  if (role === 'host') startMatch('host');
+  if (role === 'host') { if (!G) startMatch('host'); }
   else { setText('joinStatus', 'Connected! Waiting for host to start…'); setText('rjStatus', 'Connected! Waiting for host to start…'); }
 }
 function onDisc() {
@@ -693,7 +744,7 @@ $('m-host').onclick = () => {
   audio(); closeNet(); $('roomName').value = randPass(); $('roomCreate').disabled = false;
   $('roomShare').classList.add('hidden'); setText('roomStatus', ''); showScreen('s-host');
 };
-$('roomCreate').onclick = startRoomHost;
+$('roomCreate').onclick = () => startRoomHost(false);
 $('r-share').onclick = () => shareText({ title: 'Neon Pong', text: 'Join my Neon Pong match! Password: ' + $('roomName').value, url: /^https?:/.test(hostLink) ? hostLink : undefined }, hostLink);
 $('r-copy').onclick = () => copyText(hostLink);
 $('m-join').onclick = () => { audio(); closeNet(); $('joinName').value = ''; setText('rjStatus', ''); showScreen('s-join'); };
@@ -919,7 +970,7 @@ const hm = location.hash.match(/j=(PONG1\.[zp][A-Za-z0-9_-]+)/);
 const rm = location.hash.match(/r=([a-z0-9-]+)/i);
 if (hm) { history.replaceState(null, '', location.pathname + location.search); startJoin(hm[1]); }
 else if (rm) { history.replaceState(null, '', location.pathname + location.search); startRoomJoin(rm[1]); }
-window.__pong = { get G() { return G; }, startMatch };
+window.__pong = { get G() { return G; }, get peer() { return peer; }, startMatch };
 })();
 </script>
 </body>
